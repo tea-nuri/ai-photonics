@@ -12,18 +12,25 @@ cd ai-photonics
 docker build -t tea-photonics .
 ```
 
-Положите четыре входных PNG в каталог `input` и создайте каталог результатов:
+Каталоги `input/` и `output/` уже находятся **в корне репозитория, рядом с `Dockerfile`, `predict.py` и этим README**. После клонирования создавать их не нужно. Положите четыре входных PNG в `ai-photonics/input/`. Команды ниже выполняйте из `ai-photonics/`:
 
 ```text
-input/
-  1.png  # 24.1 мм
-  2.png  # 25.3 мм
-  3.png  # 26.5 мм
-  4.png  # 27.7 мм
+ai-photonics/
+  Dockerfile
+  predict.py
+  input/
+    .gitkeep
+    1.png  # 24.1 мм
+    2.png  # 25.3 мм
+    3.png  # 26.5 мм
+    4.png  # 27.7 мм
+  output/
+    .gitkeep
 ```
 
+Файлы `.gitkeep` сохраняют пустые каталоги в Git и не мешают запуску. Входные изображения и результаты игнорируются Git.
+
 ```bash
-mkdir -p output
 docker run --rm --network none \
   --mount type=bind,src="$(pwd)/input",dst=/input,readonly \
   --mount type=bind,src="$(pwd)/output",dst=/output \
