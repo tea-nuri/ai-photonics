@@ -9,8 +9,9 @@ import numpy as np
 import torch
 from PIL import Image
 
+from photonics.metrics import image_metrics
 from photonics.model import load_model
-from photonics.physics import phase_to_uint8
+from photonics.physics import numpy_reconstruct, phase_to_uint8
 
 
 def load_inputs(paths):
@@ -58,7 +59,8 @@ def synchronize(device):
 
 
 def predict(model, paths, output_dir, device):
-    tensor = torch.from_numpy(load_inputs(paths)[None]).to(device)
+    targets = load_inputs(paths)
+    tensor = torch.from_numpy(targets[None]).to(device)
     synchronize(device)
     start = time.perf_counter()
     with torch.inference_mode():
@@ -69,7 +71,58 @@ def predict(model, paths, output_dir, device):
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / "doe.png"
     Image.fromarray(pixels).save(destination)
-    return {"output": str(destination), "inference_seconds": elapsed, "device": device}
+    # Reconstruct from the actual exported DOE, including its 8-bit quantization.
+    with Image.open(destination) as exported:
+        pixels = np.array(exported)
+    reconstructions = numpy_reconstruct(pixels, model.physics.config)
+    planes = []
+    for index, (target, restored, distance) in enumerate(
+        zip(targets, reconstructions, model.physics.config.distances_m), 1
+    ):
+        filename = f"recon_{index}.png"
+        restored_pixels = np.rint(np.clip(restored, 0, 1) * 255).astype(np.uint8)
+        Image.fromarray(restored_pixels).save(output_dir / filename)
+        with Image.open(output_dir / filename) as exported:
+            reopened = np.array(exported, dtype=np.float64) / 255.0
+        planes.append(
+            {
+                "plane": index,
+                "distance_mm": distance * 1000,
+                "input": str(paths[index - 1]),
+                "reconstruction": filename,
+                **image_metrics(target, reopened),
+            }
+        )
+    defined = [item["pearson"] for item in planes if item["pearson"] is not None]
+    report = {
+        "doe": "doe.png",
+        "optics": model.physics.config.to_dict(),
+        "phase_encoding": "pixel / 255 * 2*pi - pi",
+        "reconstructed_from": "saved_and_reopened_8bit_doe_png",
+        "metric_inputs": "saved_and_reopened_8bit_reconstruction_pngs; independent maximum normalization",
+        "ssim_parameters": {
+            "window": 11,
+            "gaussian_sigma": 1.5,
+            "data_range": 1.0,
+            "sample_covariance": False,
+        },
+        "planes": planes,
+        "mean": {
+            "ssim": float(np.mean([item["ssim"] for item in planes])),
+            "pearson": float(np.mean(defined)) if defined else None,
+        },
+        "inference_seconds": elapsed,
+        "device": device,
+    }
+    (output_dir / "metrics.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    )
+    return {
+        "output": str(destination),
+        "inference_seconds": elapsed,
+        "device": device,
+        "mean": report["mean"],
+    }
 
 
 def main():
